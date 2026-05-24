@@ -29,8 +29,11 @@ async function run() {
     const roomCollection = db.collection("rooms");
 
     app.get("/featured", async (req, res) => {
-
-      try{const result = await roomCollection.find().limit(4).toArray()
+      //note: Sort by _id descending (-1) to get the most recently created documents first
+      try{const result = await roomCollection.find({})
+      .sort({ _id: -1 }) 
+      .limit(6)
+      .toArray();
       res.json(result)}
       catch (error){console.error("Database Insertion Error:", error);
     res.status(500).json({ error: "Failed get room data" });}
