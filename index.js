@@ -21,11 +21,13 @@ const client = new MongoClient(uri, {
 });
 
 let roomsCollection;
+let bookingCollection;
 
 async function run() {
   try {
     const db = client.db("studyNook");
     roomsCollection = db.collection("rooms");
+    bookingCollection = db.collection("bookingRooms")
 
 
     // ==================== API ROUTES ====================
@@ -99,20 +101,76 @@ async function run() {
       }
     });
 
-    // PATCH: Increment Booking Counter
-    app.patch("/rooms/:id/book", async (req, res) => {
-      try {
-        const { id } = req.params;
-        const filter = { _id: new ObjectId(id) };
-        const updateDoc = {
-          $inc: { bookingCount: 1 } 
-        };
-        const result = await roomsCollection.updateOne(filter, updateDoc);
-        res.json(result);
-      } catch (error) {
-        res.status(500).json({ error: "Failed to process room booking incrementation step" });
-      }
+    
+
+    
+    // POST: Create a New Booking with Slot Conflict Validation Checks
+app.post("/bookings", async (req, res) => {
+  try {
+    const { roomId, roomName, roomImage, date, startTime, endTime, userEmail, userName, totalCost, specialNote } = req.body;
+
+    // 1. Structural Validation Security Check
+    if (!roomId || !date || startTime === undefined || endTime === undefined) {
+      return res.status(400).json({ message: "Missing required booking reservation parameters." });
+    }
+
+    if (startTime >= endTime) {
+      return res.status(400).json({ message: "End time must occur after the selected start time." });
+    }
+
+    // 2. CONFLICT CHECK: Search for overlapping time slots for this specific room on this date
+    const overlappingBooking = await bookingCollection.findOne({
+      roomId: roomId,
+      date: date,
+      $and: [
+        { startTime: { $lt: endTime } },  // Existing booking starts before your requested slot ends
+        { endTime: { $gt: startTime } }  // Existing booking ends after your requested slot starts
+      ]
     });
+
+    // 3. Reject if a conflict exists
+    if (overlappingBooking) {
+      return res.status(409).json({ 
+        message: `This specific slot is already reserved from ${overlappingBooking.startTime}:00 to ${overlappingBooking.endTime}:00.` 
+      });
+    }
+
+    // 4. No conflict found -> Create the booking document structure
+    const newBooking = {
+      roomId,
+      roomName,
+      roomImage,
+      date,
+      startTime,
+      endTime,
+      userEmail,
+      userName,
+      totalCost,
+      specialNote,
+      status: "confirmed", // Default status indicator state
+      createdAt: new Date()
+    };
+
+    const bookingResult = await bookingCollection.insertOne(newBooking);
+
+    // 5. ATOMIC INCREMENT: Boost the bookingCount metric counter inside the rooms collection
+    await roomsCollection.updateOne(
+      { _id: new ObjectId(roomId) /* Use new ObjectId(roomId) if stored as standard BSON ObjectIds */ },
+      { $inc: { bookingCount: 1 } }
+    );
+
+    // Return success to the frontend client framework
+    res.status(201).json({
+      success: true,
+      message: "Room booked successfully!",
+      bookingId: bookingResult.insertedId
+    });
+
+  } catch (error) {
+    console.error("❌ Fatal Booking Transaction Failure:", error);
+    res.status(500).json({ message: "Internal server error while processing reservation.", error: error.message });
+  }
+});
 
     // Delet Room
     app.delete("/rooms/:id", async (req, res) => {
