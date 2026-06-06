@@ -1,7 +1,9 @@
 const express = require('express')
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
+// const { createRemoteJWKSet, jwtVerify } = require("jose");
 const dotenv = require('dotenv') 
 const cors = require("cors");
+const { createRemoteJWKSet, jwtVerify } = require('jose-cjs');
 dotenv.config()
 
 const app = express()
@@ -21,6 +23,28 @@ const client = new MongoClient(uri, {
 
 let roomsCollection;
 let bookingCollection;
+
+const JWKS = createRemoteJWKSet(new URL(`${process.env.CLIENT_URL}/api/auth/jwks`));
+// const JWKS = createRemoteJWKSet(new URL(`http://localhost:3000/api/auth/jwks`));
+
+const verifyToken = async (req, res, next) => {
+  const authHeader = req?.headers.authorization;
+  if (!authHeader) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+  const token = authHeader.split(" ")[1];
+  if (!token) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+
+  try {
+    const { payload } = await jwtVerify(token, JWKS);
+    // console.log(payload);
+    next();
+  } catch (error) {
+    return res.status(403).json({ message: "Forbidden" });
+  }
+};
 
 async function run() {
   try {
@@ -86,7 +110,7 @@ async function run() {
     });
 
     // GET: My-Bookings
-    app.get("/bookings", async (req, res) => {
+    app.get("/bookings", verifyToken, async (req, res) => {
       try {
         const { email } = req.query;
         let query = {};
@@ -94,6 +118,8 @@ async function run() {
           query.userEmail = email; 
         }
         const result = await bookingCollection.find(query).toArray();
+        // const header = req?.headers.authorization ;
+        // console.log('header token', header);
         res.json(result);
       } catch (error) {
         res.status(500).json({ error: "Failed to fetch bookings." });
@@ -116,7 +142,7 @@ async function run() {
     });
 
     // POST: Create a New Booking with Slot Conflict Validation Checks
-    app.post("/bookings", async (req, res) => {
+    app.post("/bookings", verifyToken, async (req, res) => {
       try {
         const { roomId, roomName, roomImage, date, startTime, endTime, userEmail, userName, totalCost, specialNote } = req.body;
 
@@ -234,7 +260,7 @@ async function run() {
     });
 
     // PATCH: Cancel an Active Room Booking Safely
-    app.patch("/bookings/:id/cancel", async (req, res) => {
+    app.patch("/bookings/:id/cancel", verifyToken,  async (req, res) => {
       try {
         const bookingId = req.params.id;
         const { userEmail } = req.body; 
